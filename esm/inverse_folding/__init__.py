@@ -5,4 +5,3 @@
 
 from . import gvp_transformer
 from . import util
-from . import multichain_util
