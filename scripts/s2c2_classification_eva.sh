@@ -4,7 +4,7 @@ ESM_MODEL=esm2_t36_3B_UR50D
 
 if [ -n "$1" ]; then 
     ESM_MODEL=$1 
-    echo "train $ESM_MODEL"
+    echo "Evaluate $ESM_MODEL"
 fi
 
 if [ "$ESM_MODEL" == "esm1b_t33_650M_UR50S" ]; then
@@ -13,7 +13,7 @@ else
     PRETRAINED_MODEL=''
 fi
 
-python finetune_sup_head_fst.py \
+python s2c2_classification_evaluate.py \
     $ESM_MODEL \
     d1/d1_fasta_clean \
     S2C2_classification_${ESM_MODEL} \
@@ -25,6 +25,6 @@ python finetune_sup_head_fst.py \
     --lr-factor 10 \
     --split_file d1/d1_1_classification.pkl \
     --seed 1 \
-    --mix \
+    --adv \
     --gamma 1e-6 \
     --load-pretrained "${PRETRAINED_MODEL}"

@@ -136,7 +136,7 @@ def main(args):
 
     # Load pretiraned model
     model, alphabet = pretrained.load_model_and_alphabet(args.model_location)
-    linear = nn.Sequential( nn.Linear(1280, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
+    linear = nn.Sequential( nn.Linear(model.embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
     checkpoint = torch.load(f"{args.output_dir}/{args.output_name}.pt")
     linear.load_state_dict(checkpoint['linear'])
     model.load_state_dict(checkpoint['model']) 

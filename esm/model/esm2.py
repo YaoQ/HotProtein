@@ -129,7 +129,7 @@ class ESM2(nn.Module):
         x = self.lm_head(x)
         
         if return_temp:
-            hiddens = hidden_representations[33]
+            hiddens = hidden_representations[self.num_layers]
             hidden = []
             for i in range(hiddens.shape[0]):
                 mask = tokens[i] >= 2

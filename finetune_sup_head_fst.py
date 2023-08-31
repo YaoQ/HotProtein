@@ -14,6 +14,9 @@ import torch.nn.utils.prune as prune
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import logging 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 from esm import Alphabet, FastaBatchedDataset, ProteinBertModel, pretrained, CSVBatchedDataset, creating_ten_folds, PickleBatchedDataset, FireprotDBBatchedDataset
 from esm.modules import TransformerLayer, SparseMultiheadAttention
@@ -166,7 +169,7 @@ def main(args):
         model.load_state_dict(torch.load(args.checkpoint))
 
 
-    linear = nn.Sequential( nn.Linear(1280, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
+    linear = nn.Sequential( nn.Linear(model.embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
     for name, p in model.named_parameters():
         if 'adapter' in name or 'sparse' in name:
             p.requires_grad = True
@@ -226,6 +229,7 @@ def main(args):
     lr_scheduler2 = torch.optim.lr_scheduler.OneCycleLR(optimizer2, max_lr=args.lr / args.lr_factor, steps_per_epoch=1, epochs=int(20))
     step = 0
     for epoch in range(6):
+        logger.info('Epoch {}'.format(epoch))
         model.eval()
         for batch_idx, (labels, strs, toks) in enumerate(train_data_loader):
             step += 1
@@ -263,6 +267,8 @@ def main(args):
             else:
                 hiddens = linear(hidden)
                 loss = F.cross_entropy(hiddens.view(hiddens.shape[0], args.num_classes), labels)
+            if batch_idx % 40 == 0:
+                logger.info('Training Loss: {:.4f}'.format(loss.item()))
             loss.backward()
             optimizer1.step()
             optimizer2.step()
@@ -270,19 +276,20 @@ def main(args):
             model.zero_grad()
             if (step + 1) % args.save_freq == 0:
                 model.eval()
-                acc = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
-                if acc > best:
+                accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
+                if accuracy > best:
                     torch.save({'linear': linear.state_dict(), 'model': model.state_dict()}, f"{args.output_dir}/{args.output_name}.pt")
-                    best = acc
+                    best = accuracy
             model.train()
         lr_scheduler1.step()
         lr_scheduler2.step()
         model.eval()
-        acc = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
-        if acc > best:
+        accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
+        if accuracy > best:
             torch.save({'linear': linear.state_dict(), 'model': model.state_dict()}, f"{args.output_dir}/{args.output_name}.pt")
-            best = acc
-    print(f"Best Accuracy: {best}")
+            logger.info('Saving model to {}'.format("{}/{}.pt".format(args.output_dir, args.output_name)))
+            best = accuracy
+    logger.info('Best Accuracy: {:.4f}'.format(best * 100))
 
 def evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step):
     with torch.no_grad():
@@ -304,11 +311,11 @@ def evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step
         
         outputs = torch.cat(outputs, 0)
         tars = torch.cat(tars, 0)
-        acc = (outputs == tars).float().sum() / tars.nelement()
+        accuracy = (outputs == tars).float().sum() / tars.nelement()
         precision = ((outputs == tars).float() * (outputs == 1).float()).sum() / (outputs == 1).float().sum()
-        print(f"Precision: {precision}")
-        print(f"Accuracy: {acc}")
-        return acc
+        logger.info('Accuracy: {:.4f}'.format(accuracy * 100))
+        logger.info('Precision: {:.4f}'.format(precision * 100))
+        return accuracy, precision
 
 if __name__ == "__main__":
     parser = create_parser()
