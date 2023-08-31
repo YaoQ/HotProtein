@@ -138,8 +138,8 @@ def main(args):
     
     # wandb.config.update(vars(args))
     best = 0
-    model, alphabet = pretrained.load_model_and_alphabet(args.model_location, num_classes=args.num_classes, use_sparse=True, noise_aug=args.noise, rank=args.rank)
-    if args.load_pretrained is not None:
+    model, alphabet = pretrained.load_model_and_alphabet(args.model_location)
+    if args.load_pretrained is not None and args.load_pretrained.strip() != "" :
         print(f'loading {args.load_pretrained}')
         state_dict = torch.load(args.load_pretrained, map_location='cpu')['state_dict']
         model.load_state_dict(state_dict, strict=False)
@@ -173,8 +173,8 @@ def main(args):
         else:
             p.requires_grad = False
     
-    for name, p in model.named_parameters():
-        print(name, p.requires_grad)
+    #for name, p in model.named_parameters():
+    #    print(name, p.requires_grad)
     for name, m in model.named_modules():
         if isinstance(m, SparseMultiheadAttention):
             Q_weight = m.q_proj.weight
@@ -307,7 +307,7 @@ def evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step
         acc = (outputs == tars).float().sum() / tars.nelement()
         precision = ((outputs == tars).float() * (outputs == 1).float()).sum() / (outputs == 1).float().sum()
         print(f"Precision: {precision}")
-        print(f"Acc: {acc}")
+        print(f"Accuracy: {acc}")
         return acc
 
 if __name__ == "__main__":

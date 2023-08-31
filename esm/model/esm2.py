@@ -74,7 +74,7 @@ class ESM2(nn.Module):
             weight=self.embed_tokens.weight,
         )
 
-    def forward(self, tokens, repr_layers=[], need_head_weights=False, return_contacts=False):
+    def forward(self, tokens, repr_layers=[], need_head_weights=False, return_contacts=False, return_temp=False):
         if return_contacts:
             need_head_weights = True
 
@@ -127,8 +127,22 @@ class ESM2(nn.Module):
         if (layer_idx + 1) in repr_layers:
             hidden_representations[layer_idx + 1] = x
         x = self.lm_head(x)
+        
+        if return_temp:
+            hiddens = hidden_representations[33]
+            hidden = []
+            for i in range(hiddens.shape[0]):
+                mask = tokens[i] >= 2
 
-        result = {"logits": x, "representations": hidden_representations}
+                hidden.append(hiddens[i][mask].mean(0))
+            hidden = torch.stack(hidden)
+            # temp = self.temp_head(hidden)
+            # cls_logits = self.classification_head(hidden)
+        else:
+            hidden = None
+    
+        result = {"logits": x, "representations": hidden_representations, "temp": None, "cls_logits": None, "hidden": hidden}
+
         if need_head_weights:
             # attentions: B x L x H x T x T
             attentions = torch.stack(attn_weights, 1)
