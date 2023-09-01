@@ -13,6 +13,13 @@ else
     PRETRAINED_MODEL=''
 fi
 
+
+if [ ! -d "log" ]; then
+ mkdir -p "log"
+ echo "Directory $dir created."
+fi
+
+nohup \
 python finetune_sup_head_fst.py \
     $ESM_MODEL \
     d1/d1_fasta_clean \
@@ -25,6 +32,7 @@ python finetune_sup_head_fst.py \
     --lr-factor 10 \
     --split_file d1/d1_1_classification.pkl \
     --seed 1 \
-    --mix \
+    --adv \
     --gamma 1e-6 \
-    --load-pretrained "${PRETRAINED_MODEL}"
+    --load-pretrained "${PRETRAINED_MODEL}" \
+    >> log/ S2C2_classification_${ESM_MODEL}.log 2>&1 &

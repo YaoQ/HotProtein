@@ -140,7 +140,10 @@ def main(args):
     set_seed(args)
     
     # wandb.config.update(vars(args))
-    best = 0
+    best_accuray = 0
+    best_precision = 0
+    best_epoch = 0
+
     model, alphabet = pretrained.load_model_and_alphabet(args.model_location)
     if args.load_pretrained is not None and args.load_pretrained.strip() != "" :
         print(f'loading {args.load_pretrained}')
@@ -157,11 +160,14 @@ def main(args):
         train_set, collate_fn=alphabet.get_batch_converter(), batch_size=4, shuffle=True, num_workers=8,
     )
     test_data_loader = torch.utils.data.DataLoader(
-        test_set, collate_fn=alphabet.get_batch_converter(), batch_size=4, num_workers=8, #batch_sampler=test_batches
+        test_set, collate_fn=alphabet.get_batch_converter(), batch_size=4, num_workers=16, #batch_sampler=test_batches
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     return_contacts = "contacts" in args.include
+
+    # Get embed dim to create linear layer
+    embed_dim = model.embed_tokens.embedding_dim
 
     assert all(-(model.num_layers + 1) <= i <= model.num_layers for i in args.repr_layers)
     repr_layers = [(i + model.num_layers + 1) % (model.num_layers + 1) for i in args.repr_layers]
@@ -169,7 +175,7 @@ def main(args):
         model.load_state_dict(torch.load(args.checkpoint))
 
 
-    linear = nn.Sequential( nn.Linear(model.embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
+    linear = nn.Sequential( nn.Linear(embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
     for name, p in model.named_parameters():
         if 'adapter' in name or 'sparse' in name:
             p.requires_grad = True
@@ -231,6 +237,7 @@ def main(args):
     for epoch in range(6):
         logger.info('Epoch {}'.format(epoch))
         model.eval()
+        log_freq = int(len(train_data_loader)/10)
         for batch_idx, (labels, strs, toks) in enumerate(train_data_loader):
             step += 1
 
@@ -267,29 +274,36 @@ def main(args):
             else:
                 hiddens = linear(hidden)
                 loss = F.cross_entropy(hiddens.view(hiddens.shape[0], args.num_classes), labels)
-            if batch_idx % 40 == 0:
-                logger.info('Training Loss: {:.4f}'.format(loss.item()))
+
+            if batch_idx % log_freq == 0:
+                logger.info('Epoch {} {}/{}, Training Loss: {:.4f}'.format(epoch, batch_idx, len(train_data_loader), loss.item()))
+
             loss.backward()
             optimizer1.step()
             optimizer2.step()
             linear.zero_grad()
             model.zero_grad()
+
+            # Save internal model
             if (step + 1) % args.save_freq == 0:
                 model.eval()
                 accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
-                if accuracy > best:
+                if accuracy > best_accuray:
                     torch.save({'linear': linear.state_dict(), 'model': model.state_dict()}, f"{args.output_dir}/{args.output_name}.pt")
-                    best = accuracy
+                    best_accuray = accuracy
             model.train()
+
         lr_scheduler1.step()
         lr_scheduler2.step()
         model.eval()
         accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step)
-        if accuracy > best:
+        if accuracy > best_accuray:
             torch.save({'linear': linear.state_dict(), 'model': model.state_dict()}, f"{args.output_dir}/{args.output_name}.pt")
             logger.info('Saving model to {}'.format("{}/{}.pt".format(args.output_dir, args.output_name)))
-            best = accuracy
-    logger.info('Best Accuracy: {:.4f}'.format(best * 100))
+            best_accuray = accuracy
+            best_precision = precision
+    logger.info('Best Accuracy: {:.4f}'.format(best_accuray * 100))
+    logger.info('Best Precision: {:.4f}'.format(best_precision * 100))
 
 def evaluate(model, linear, test_data_loader, repr_layers, return_contacts, step):
     with torch.no_grad():
