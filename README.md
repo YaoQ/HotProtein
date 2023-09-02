@@ -29,6 +29,25 @@ Please find the outcomes of protein structure-aware pre-training (SAP) in this [
 
 We provide sample training scripts in the `scripts` folder. 
 
+```bash
+# train esm1b_t33_650M_UR50D with HP-S2C2 using sap.pt model
+bash scripts/s2c2_classification.sh  
+
+# train esm2_t33_650M_UR50D with HP-S2C2 dataset ``
+bash scripts/s2c2_classification.sh  esm2_t33_650M_UR50D
+
+# train esm2_t6_8M_UR50D with HP-S2C2 dataset
+bash scripts/s2c2_classification.sh  esm2_t6_8M_UR50D 
+
+
+# train esm2_t36_3B_UR50D with HP-S dataset, need more than 14 GB GPU memory
+bash scripts/s_classification.sh esm2_t36_3B_UR50D 
+
+# train esm2_t48_15B_UR50D with HP-S dataset, need more  than 48GB GPU memory
+bash scripts/s_classification.sh esm2_t48_15B_UR50D 
+
+```
+
 
 ## Acknowledgement
 

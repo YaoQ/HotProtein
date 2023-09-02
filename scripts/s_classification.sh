@@ -26,7 +26,7 @@ python finetune_sup_head_fst.py \
     --num_classes 5 \
     --include mean per_tok \
     --toks_per_batch 2048 \
-    --save-freq 30000 \
+    --save-freq 8000 \
     --lr 1e-3 \
     --rank 16 \
     --lr-factor 10 \

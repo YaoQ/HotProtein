@@ -234,10 +234,10 @@ def main(args):
     lr_scheduler1 = torch.optim.lr_scheduler.OneCycleLR(optimizer1, max_lr=args.lr, steps_per_epoch=1, epochs=int(20))
     lr_scheduler2 = torch.optim.lr_scheduler.OneCycleLR(optimizer2, max_lr=args.lr / args.lr_factor, steps_per_epoch=1, epochs=int(20))
     step = 0
+    log_freq = int(len(train_data_loader)/360)
     for epoch in range(6):
         logger.info('Epoch {}'.format(epoch))
         model.eval()
-        log_freq = int(len(train_data_loader)/10)
         for batch_idx, (labels, strs, toks) in enumerate(train_data_loader):
             step += 1
 

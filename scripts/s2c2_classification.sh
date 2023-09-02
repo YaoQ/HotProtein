@@ -15,8 +15,8 @@ fi
 
 
 if [ ! -d "log" ]; then
- mkdir -p "log"
- echo "Directory $dir created."
+    mkdir -p "log"
+    echo "Directory $dir created."
 fi
 
 nohup \
@@ -35,4 +35,4 @@ python finetune_sup_head_fst.py \
     --adv \
     --gamma 1e-6 \
     --load-pretrained "${PRETRAINED_MODEL}" \
-    >> log/ S2C2_classification_${ESM_MODEL}.log 2>&1 &
+    >> log/S2C2_classification_${ESM_MODEL}.log 2>&1 &
