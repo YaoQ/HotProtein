@@ -5,12 +5,14 @@
 
 from collections import OrderedDict
 import torch
+import numpy as np
 from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
 import esm
 from esm.model.esm2 import ESM2
 from deepspeed.pipe import PipelineModule, TiedLayerSpec, LayerSpec
+from esm.utils import PGD_classification, PGD_classification_amino
 import re
 # Create ESM
 class ESM2CLS(nn.Module):
@@ -45,20 +47,41 @@ class ESM2CLS(nn.Module):
             alphabet=self.alphabet,
             token_dropout=self.token_dropout,
         )
-        
+
         # Create a linear layer
         self.linear = nn.Sequential( nn.Linear(self.embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, self.num_classes))
-
+        
         # Set all esm2 parameters to not require gradients
         for param in self.esm2.parameters():
             param.requires_grad = False
-        
-        # Load the state_dict of the model
-        self.load_state_dict()
 
-    def forward(self, tokens):
+    def forward(self, tokens, labels=None, args= None):
         out = self.esm2(tokens, repr_layers=self.repr_layers, return_contacts=False, return_temp=True)
         hidden = out['hidden']
+
+        ## addd Adversarial Feature Augmentation
+        if args is not None:
+            if args.mix:
+                lam = np.random.beta(0.2, 0.2)
+                rand_index = torch.randperm(hidden.size()[0]).cuda()
+                labels_all_a = labels
+                labels_all_b = labels[rand_index]
+                hiddens_a = hidden
+                hiddens_b = hidden[rand_index]
+                hiddens = lam * hiddens_a + (1 - lam) * hiddens_b
+                result = self.linear(hiddens)
+                return result, labels_all_a, labels_all_b, lam
+            elif args.adv:
+                hidden_adv = PGD_classification(hidden, self.linear, labels, steps=1, eps=3/255, num_classes=self.num_classes, gamma=1e-3)
+                hiddens_adv = self.linear(hidden_adv)
+                hiddens_clean = self.linear(hidden)
+                return hiddens_adv, hiddens_clean 
+            elif args.aadv:
+                hidden_adv = PGD_classification_amino(hidden, self.linear, labels, steps=1, eps=3/255, num_classes=self.num_classes, gamma=1e-3)
+                hiddens_adv = self.linear(hidden_adv)
+                hiddens_clean = self.linear(hidden)
+                return hiddens_adv, hiddens_clean 
+        
         result = self.linear(hidden)
         return result
         

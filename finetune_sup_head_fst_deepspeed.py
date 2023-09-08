@@ -7,20 +7,15 @@
 import argparse
 import pathlib
 import random
-import re
-from sched import scheduler
 import numpy as np
 import torch
 import torch.nn.utils.prune as prune
-import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import time
 import logging 
 import deepspeed
 from deepspeed.accelerator import get_accelerator
-from deepspeed.pipe import PipelineModule
-from deepspeed.runtime.data_pipeline.data_routing.helper import convert_to_random_ltd, save_without_random_ltd
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -39,7 +34,7 @@ from esm.utils import PGD_classification, PGD_classification_amino
 # 3) DeepSpeed optimizer
 ds_config = {
   "train_batch_size": 4,
-  "steps_per_print": 500,
+  "steps_per_print": 1000000,
   "optimizer": {
     "type": "Adam",
     "params": {
@@ -52,11 +47,26 @@ ds_config = {
       "weight_decay": 5e-2
     }
   },
+  "comms_logger": {
+  "enabled": False,
+  "verbose": False,
+  "prof_all": False,
+  "debug": False
+},
   "scheduler": {
     "type": "OneCycle",
     "params": {
-      "cycle_min_lr": 0,
-      "cycle_max_lr": 0.001,
+        "cycle_first_step_size": 100,
+        "cycle_first_stair_count": 50,
+        "cycle_second_step_size": 100,
+        "cycle_second_stair_count": 50,
+        "decay_step_size": 100,
+        "cycle_min_lr": 0.0001,
+        "cycle_max_lr": 1e-6,
+        "decay_lr_rate": 0.001,
+        "cycle_min_mom": 0.85,
+        "cycle_max_mom": 0.99,
+        "decay_mom_rate": 0.0
     }
   },
   "gradient_clipping": 1.0,
@@ -152,9 +162,9 @@ def create_parser():
     )
     parser.add_argument('-e',
          '--epochs',
-         default=30,
+         default=6,
          type=int,
-         help='number of total epochs (default: 30)')
+         help='number of total epochs (default: 6)')
     parser.add_argument('--local_rank',
         type=int,
         default=-1,
@@ -162,7 +172,7 @@ def create_parser():
     )
     parser.add_argument(
         '--dtype',
-        default='fp32',
+        default='fp16',
         type=str,
         choices=['bf16', 'fp16', 'fp32'],
         help=
@@ -185,7 +195,7 @@ def create_parser():
     parser.add_argument("--adv", action="store_true")
     parser.add_argument("--aadv", action="store_true")
     parser.add_argument("--rank", type=int, default=8)
-    parser.add_argument("--save-freq", type=int, default=100)
+    parser.add_argument("--save-freq", type=int, default=200)
     parser.add_argument("--sparse", type=int, default=64)
     parser.add_argument("--lr-factor", type=int, default=1000)
     parser.add_argument("--num-workers", type=int, default=8)
@@ -325,9 +335,22 @@ def main(parser):
             labels, strs, toks = data
             step += 1
             data = toks.clone().to(local_device)
-            out = engine(data)
             labels = torch.tensor(labels).to(local_device).long()
-            loss = F.cross_entropy(out.view(out.shape[0], args.num_classes) , labels)
+
+            if args.mix:
+                hiddens, labels_all_a, labels_all_b,lam  = engine(data,labels, args)
+                loss = F.cross_entropy(hiddens.view(hiddens.shape[0], args.num_classes), labels_all_a) * lam + \
+                    F.cross_entropy(hiddens.view(hiddens.shape[0], args.num_classes), labels_all_b) * (1 - lam)
+            elif args.adv:
+                hiddens_adv, hiddens_clean = engine(data, labels, args)
+                loss = (F.cross_entropy(hiddens_adv.view(hiddens_adv.shape[0], args.num_classes), labels) + F.cross_entropy(hiddens_clean.view(hiddens_clean.shape[0], args.num_classes), labels)) / 2
+            elif args.aadv:
+                hiddens_adv, hiddens_clean = engine(data, labels, args)
+                loss = (F.cross_entropy(hiddens_adv.view(hiddens_adv.shape[0], args.num_classes), labels) + F.cross_entropy(hiddens_clean.view(hiddens_clean.shape[0], args.num_classes), labels)) / 2
+            else:
+                hiddens = engine(data)
+                loss = F.cross_entropy(hiddens.view(hiddens.shape[0], args.num_classes), labels)
+
             engine.backward(loss)
             engine.step()
             if (step + 1) % args.save_freq == 0:

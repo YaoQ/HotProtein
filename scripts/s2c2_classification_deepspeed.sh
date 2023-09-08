@@ -1,5 +1,5 @@
 #!/bin/bash 
-export CUDA_VISIBLE_DEVICES=0,2,4,6
+export CUDA_VISIBLE_DEVICES=0
 export LD_LIBRARY_PATH=/usr/local/cuda-11.6/lib64
 export PATH=/usr/local/cuda-11.6/bin:$PATH
 
@@ -33,6 +33,7 @@ deepspeed finetune_sup_head_fst_deepspeed.py \
     --include mean per_tok \
     --toks_per_batch 2048 \
     --lr 1e-3 \
+    --adv \
     --rank 4 \
     --lr-factor 10 \
     --split_file d1/d1_1_classification.pkl \
