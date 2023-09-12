@@ -14,6 +14,9 @@ import torch.nn.utils.prune as prune
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import tqdm
+from deepspeed.accelerator import get_accelerator
+import deepspeed
 
 from esm import Alphabet, FastaBatchedDataset, ProteinBertModel, pretrained, CSVBatchedDataset, creating_ten_folds, PickleBatchedDataset, FireprotDBBatchedDataset
 from esm.modules import TransformerLayer, SparseMultiheadAttention
@@ -138,17 +141,24 @@ def main(args):
     model, alphabet = pretrained.load_model_and_alphabet(args.model_location)
     embed_dim = model.embed_tokens.embedding_dim
     linear = nn.Sequential( nn.Linear(embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
-    checkpoint = torch.load(f"{args.output_dir}/{args.output_name}.pt", map_location='cpu')
+    checkpoint = torch.load(f"{args.output_dir}/{args.output_name}.pt")
+    
+    local_rank = torch.distributed.get_rank() if (torch.distributed.is_initialized()) else -1
+    device = (torch.device(get_accelerator().device_name(), local_rank) if (local_rank > -1)
+              and get_accelerator().is_available() else torch.device("cpu"))
+    
     linear.load_state_dict(checkpoint['linear'])
     model.load_state_dict(checkpoint['model']) 
-    
     model.eval()
     linear.eval()
 
-    if torch.cuda.is_available() and not args.nogpu:
-        model = model.cuda()
-        linear = linear.cuda()
-        print("Transferred model to GPU")
+
+    #if torch.cuda.is_available() and not args.nogpu:
+    #    model = model.cuda()
+    #    linear = linear.cuda()
+    #    print("Transferred model to GPU")
+    model = model.to(device)
+    linear = linear.to(device)
 
     return_contacts = "contacts" in args.include
 
@@ -156,37 +166,22 @@ def main(args):
     repr_layers = [(i + model.num_layers + 1) % (model.num_layers + 1) for i in args.repr_layers]
     
     # Evaluate on test set for 10 folds
-    mean_accuracy = 0;
-    mean_precision = 0;
+    test_set = PickleBatchedDataset.from_file(args.split_file, False, args.fasta_file)
+    test_data_loader = torch.utils.data.DataLoader(
+        test_set, collate_fn=alphabet.get_batch_converter(), batch_size=4, num_workers=8 
+    )
 
-    # d1 : s2c2
-    # d2 : s2c5
-    dataset_type = args.split_file.split("/")[0]
+    accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts, device)
 
-    FOLDS_NUM = 10
-    for i in range(FOLDS_NUM):
-        split_file= "%s/%s_%d_classification.pkl"%(dataset_type, dataset_type, i)
-        print("\nEvaluating %s ..."%(split_file))
-        test_set = PickleBatchedDataset.from_file(split_file, False, args.fasta_file)
-        test_data_loader = torch.utils.data.DataLoader(
-            test_set, collate_fn=alphabet.get_batch_converter(), batch_size=4, num_workers=8 
-        )
-
-        accuracy, precision = evaluate(model, linear, test_data_loader, repr_layers, return_contacts)
-        mean_accuracy += accuracy
-        mean_precision += precision
-
-    print("\n%d folds evaluation result"%(FOLDS_NUM))
-    print("mean accuracy: ", mean_accuracy.item()/FOLDS_NUM)
-    #print("mean precision: ", mean_precision.item()/FOLDS_NUM)
-
-def evaluate(model, linear, test_data_loader, repr_layers, return_contacts):
+def evaluate(model, linear, test_data_loader, repr_layers, return_contacts, device):
     with torch.no_grad():
         outputs = []
         tars = []
         for batch_idx, (labels, strs, toks) in tqdm(enumerate(test_data_loader)):
-            if torch.cuda.is_available() and not args.nogpu:
-                toks = toks.to(device="cuda", non_blocking=True)
+            #if torch.cuda.is_available() and not args.nogpu:
+            #    toks = toks.to(device="cuda", non_blocking=True)
+            
+            toks =toks.to(device)
             # The model is trained on truncated sequences and passing longer ones in at
             # infernce will cause an error. See https://github.com/facebookresearch/esm/issues/21
             if args.truncate:
@@ -194,7 +189,7 @@ def evaluate(model, linear, test_data_loader, repr_layers, return_contacts):
             out = model(toks, repr_layers=repr_layers, return_contacts=return_contacts, return_temp=True)
             hidden = out['hidden']
             logits = linear(hidden)
-            labels = torch.tensor(labels).cuda().long()
+            labels = torch.tensor(labels).cuda().long().to(device)
             outputs.append(torch.topk(logits.reshape(-1, args.num_classes), 1)[1].view(-1))
             tars.append(labels.reshape(-1))
         
@@ -202,8 +197,8 @@ def evaluate(model, linear, test_data_loader, repr_layers, return_contacts):
         tars = torch.cat(tars, 0)
         acc = (outputs == tars).float().sum() / tars.nelement()
         precision = ((outputs == tars).float() * (outputs == 1).float()).sum() / (outputs == 1).float().sum()
-        print(f"Precision: {precision}")
         print(f"Accuracy: {acc}")
+        print(f"Precision: {precision}")
         return acc, precision
 
 if __name__ == "__main__":
