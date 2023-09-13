@@ -7,16 +7,12 @@
 import argparse
 import pathlib
 import random
-from sched import scheduler
 import numpy as np
 import torch
 import torch.nn.utils.prune as prune
-import torch.nn as nn
-import torch.nn.functional as F
 from esm.model.esm2cls import ESM2CLS
 import deepspeed
 import logging 
-from deepspeed.accelerator import get_accelerator
 import numpy as np
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -135,8 +131,6 @@ def create_parser():
     return parser
 
 def pruning_model(model, px):
-    
-
     print('start unstructured pruning for all conv layers')
     parameters_to_prune =[]
     for name, m in model.named_modules():
@@ -164,13 +158,6 @@ def set_seed(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-ds_config = {
-    "kernel_inject": True,
-    "tensor_parallel": {"tp_size": 4},
-    "dtype": "fp32",
-    "enable_cuda_graph": False
-}
-
 def main(args):
 
     # Load pretiraned model
@@ -178,7 +165,7 @@ def main(args):
     model_name = args.model_location
     embed_dim = model.embed_tokens.embedding_dim
 
-    #deepspeed.init_distributed()
+    deepspeed.init_distributed()
 
     pretrain_path = "%s/%s.pt"%(args.output_dir, args.output_name)
     pretrain_data = torch.load(pretrain_path, map_location="cpu")
@@ -186,14 +173,20 @@ def main(args):
         num_classes=args.num_classes,
         state_dict=pretrain_data
     )    
-    engine = deepspeed.init_inference(model=mse_model,mp_size=1)
+    engine = deepspeed.init_inference(model=mse_model,
+                                    mp_size=1,
+                                    dtype=torch.float
+                                    )
     local_device = torch.device(f'cuda:0')
     # Evaluate on test set for 10 folds
     mean_accuracy = 0;
     mean_precision = 0;
+    # d1 : s2c2
+    # d2 : s2c5
+    dataset_type = args.split_file.split("/")[0]
     FOLDS_NUM = 10
     for i in range(FOLDS_NUM):
-        split_file= "d1/d1_%d_classification.pkl"%(i)
+        split_file= "%s/%s_%d_classification.pkl"%(dataset_type, dataset_type, i)
         print("\nEvaluating %s ..."%(split_file))
         test_set = PickleBatchedDataset.from_file(split_file, False, args.fasta_file)
         test_data_loader = torch.utils.data.DataLoader(
@@ -212,7 +205,7 @@ def evaluate(engine, test_data_loader, local_device, args):
     with torch.no_grad():
         outputs = []
         tars = []
-        for batch_idx, (labels, strs, toks) in enumerate(test_data_loader):
+        for batch_idx, (labels, strs, toks) in tqdm(enumerate(test_data_loader)):
             toks = toks.to(local_device)
             out = engine(toks)
             labels = torch.tensor(labels).cuda().long()

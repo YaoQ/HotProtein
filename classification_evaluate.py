@@ -139,8 +139,14 @@ def main(args):
     embed_dim = model.embed_tokens.embedding_dim
     linear = nn.Sequential( nn.Linear(embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, args.num_classes)).cuda()
     checkpoint = torch.load(f"{args.output_dir}/{args.output_name}.pt", map_location='cpu')
+    print(checkpoint.keys())
     linear.load_state_dict(checkpoint['linear'])
-    model.load_state_dict(checkpoint['model']) 
+
+    # Try to make HotProtein and ESM2CLS two networks compatible.
+    if 'ems' in checkpoint.keys():
+        model.load_state_dict(checkpoint['esm']) 
+    else:
+        model.load_state_dict(checkpoint['model'])
     
     model.eval()
     linear.eval()

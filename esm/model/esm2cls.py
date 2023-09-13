@@ -26,17 +26,22 @@ class ESM2CLS(nn.Module):
         # Load for esm state dict to train
         if state_dict is not None:
             self.state_dict = state_dict
-            self.cfg = self.state_dict["cfg"]
+            if "cfg" in self.state_dict.keys():
+                self.cfg = self.state_dict["cfg"]
+                self.num_layers= self.cfg['model'].encoder_layers
+                self.embed_dim = self.cfg['model'].encoder_embed_dim
+            else: 
+                self.cfg = None
+                self.num_layers= self.state_dict['model']['embed_tokens.weight'].shape[0]
+                self.embed_dim = self.state_dict['model']['embed_tokens.weight'].shape[1]
         else:
             self.state_dict = None
             print("None pretrain model found.")
             return
 
         self.alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
-        self.num_layers= self.cfg['model'].encoder_layers
-        self.embed_dim = self.cfg['model'].encoder_embed_dim
-        self.encoder_attention_heads = self.cfg['model'].encoder_attention_heads
-        self.token_dropout = self.cfg['model'].token_dropout
+        self.encoder_attention_heads = 20 
+        self.token_dropout = True
         self.repr_layers = [self.num_layers]
 
         # Create an ESM2 model
@@ -51,9 +56,12 @@ class ESM2CLS(nn.Module):
         # Create a linear layer
         self.linear = nn.Sequential( nn.Linear(self.embed_dim, 512), nn.LayerNorm(512), nn.ReLU(), nn.Linear(512, self.num_classes))
         
+
         # Set all esm2 parameters to not require gradients
         for param in self.esm2.parameters():
             param.requires_grad = False
+        
+        self.load_state_dict()
 
     def forward(self, tokens, labels=None, args= None):
         out = self.esm2(tokens, repr_layers=self.repr_layers, return_contacts=False, return_temp=True)
